@@ -20,7 +20,8 @@
 
 ```bash
 # Copy the example environment file to .env
-# Change the WEB_HOST value to your domain name or IP address
+# Set DEOVR_JSON_GEN_URL to the URL of your domain (if any), else
+# Change the WEB_HOST value to your IP address
 cp .env.example .env
 
 # Create an empty deovr file on project root

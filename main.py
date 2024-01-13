@@ -83,6 +83,32 @@ def strtobool(value: Any) -> bool | None:
         return None
 
 
+def get_stereo_mode(path: Path) -> StereoMode:
+    file_name = path.name.lower()
+    if any([True for i in {"tb", "top-bottom", "over-under", "3dv"} if i in file_name]):
+        return StereoMode.TOP_BOTTOM
+    elif any([True for i in {"cuv", "custom_uv"} if i in file_name]):
+        return StereoMode.CUSTOM_UV
+    elif any([True for i in {"off", "2d", "mono", "single"} if i in file_name]):
+        return StereoMode.MONOSCOPIC
+    else:  # "sbs", "lr", "left-right", "side-by-side", "3dh"
+        return StereoMode.SIDE_BY_SIDE
+
+
+def get_screen_type(path: Path) -> ScreenType:
+    file_name = path.name.lower()
+    if any([True for i in {"rf52", "190", "fisheye190"} if i in file_name]):
+        return ScreenType.FISHEYE_190
+    elif any([True for i in {"mkx200", "200", "fisheye200"} if i in file_name]):
+        return ScreenType.FISHEYE_200
+    elif any([True for i in {"sphere", "360", "full"} if i in file_name]):
+        return ScreenType.EQUIRECT_360
+    elif any([True for i in {"fisheye"} if i in file_name]):
+        return ScreenType.FISHEYE_180
+    else:  # "dome", "180", "half"
+        return ScreenType.EQUIRECT_180
+
+
 def get_video_length(path: Path) -> int:
     media_info = MediaInfo.parse(path)
     general_tracks = [t for t in media_info.tracks if t.track_type == "General"]
@@ -116,9 +142,9 @@ def get_scene(path: Path) -> Scene:
         videoLength=get_video_length(path),
         thumbnailUrl="https://www.iconsdb.com/icons/preview/red/video-play-xxl.png",
         video_url=get_video_url(path),
-        is3d=True,
-        stereoMode=StereoMode.SIDE_BY_SIDE,
-        screenType=ScreenType.EQUIRECT_180,
+        is3d=True,  # always true
+        stereoMode=get_stereo_mode(path),
+        screenType=get_screen_type(path),
     )
 
 
