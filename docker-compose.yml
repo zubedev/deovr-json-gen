@@ -9,7 +9,7 @@ services:
       # please copy .env.example to .env and update the values
       - .env
     ports:
-      - "32169:80"
+      - "${WEB_PORT}:80"
     volumes:
         - ./nginx.conf:/etc/nginx/nginx.conf
         - ${DEOVR_JSON_GEN_DIR}:/usr/share/nginx/html

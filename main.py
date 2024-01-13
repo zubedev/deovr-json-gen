@@ -98,11 +98,16 @@ def get_video_length(path: Path) -> int:
 
 
 def get_video_url(path: Path) -> str:
-    ssl = strtobool(os.getenv("WEB_SSL"))
-    protocol = "https" if ssl else "http"
-    host = os.getenv("WEB_HOST", "localhost")
-    port = os.getenv("WEB_PORT", "443" if ssl else "80")
-    return f"{protocol}://{host}:{port}/{quote(str(path.name))}"
+    url = os.getenv(f"{ENV_PREFIX}URL", "")
+
+    if not url:
+        ssl = strtobool(os.getenv("WEB_SSL"))
+        protocol = "https" if ssl else "http"
+        host = os.getenv("WEB_HOST", "localhost")
+        port = os.getenv("WEB_PORT", "")  # 80/443 inferred from protocol
+        url = f"{protocol}://{host}{':' if port else ''}{port}"
+
+    return f"{url}/{quote(str(path.name))}"
 
 
 def get_scene(path: Path) -> Scene:
