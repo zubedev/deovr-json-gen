@@ -1,0 +1,41 @@
+[tool.poetry]
+name = "deovr-json-gen"
+version = "0.1.0"
+description = "DeoVR JSON Generator"
+authors = ["Md Zubair Beg <admin@zube.dev>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pymediainfo = "^6.1.0"
+
+[tool.poetry.group.dev.dependencies]
+poethepoet = "^0.24.4"
+pre-commit = "^3.6.0"
+black = "^23.12.1"
+mypy = "^1.8.0"
+ruff = "^0.1.12"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+
+[tool.ruff]
+line-length = 120
+# https://docs.astral.sh/ruff/rules/
+extend-select = ["I", "N", "PT", "UP"]
+extend-safe-fixes = ["UP007"]
+target-version = "py311"
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.poe.tasks]
+run-app = "python main.py"
+code-check = "pre-commit run --all-files"
+code-format = "black ."
+code-lint = "ruff --fix ."
+code-type-check = "mypy ."

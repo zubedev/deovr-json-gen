@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  web:
+    image: nginx:latest
+    depends_on:
+      - gen
+    env_file:
+      # please copy .env.example to .env and update the values
+      - .env
+    ports:
+      - "32169:80"
+    volumes:
+        - ./nginx.conf:/etc/nginx/nginx.conf
+        - ${DEOVR_JSON_GEN_DIR}:/usr/share/nginx/html
+        # please create a deovr file on root of this project if it doesn't exist
+        - ./deovr:/usr/share/nginx/html/deovr
+    networks:
+        - webnet
+    restart: unless-stopped
+
+  gen:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      # please copy .env.example to .env and update the values
+      - .env
+    volumes:
+      - ${DEOVR_JSON_GEN_DIR}:/tmp/vr
+      # please create a deovr file on root of this project if it doesn't exist
+      - ./deovr:/deovr-json-gen/deovr
+    networks:
+      - webnet
+    restart: unless-stopped
+
+networks:
+  webnet:
