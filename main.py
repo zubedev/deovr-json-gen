@@ -12,6 +12,9 @@ from pymediainfo import MediaInfo
 
 ENV_PREFIX = "DEOVR_JSON_GEN_"
 
+VR_DIR = "/tmp/vr"  # if you change this, make sure to change it in docker-compose.yml gen service volume as well
+VR_PATH = Path(VR_DIR)
+
 DEFAULT_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2v", "ts"}
 
 logging.basicConfig(format="%(asctime)s %(name)s %(message)s", level=logging.INFO)
@@ -123,6 +126,11 @@ def get_video_length(path: Path) -> int:
     return int(duration_in_ms / 1000)  # convert to seconds
 
 
+def get_relative_path(path: Path) -> str:
+    relative_path = path.relative_to(VR_PATH)
+    return "/".join(relative_path.parts)
+
+
 def get_video_url(path: Path) -> str:
     url = os.getenv(f"{ENV_PREFIX}URL", "")
 
@@ -133,7 +141,7 @@ def get_video_url(path: Path) -> str:
         port = os.getenv("WEB_PORT", "")  # 80/443 inferred from protocol
         url = f"{protocol}://{host}{':' if port else ''}{port}"
 
-    return f"{url}/{quote(str(path.name))}"
+    return f"{url}/{quote(get_relative_path(path))}"
 
 
 def get_scene(path: Path) -> Scene:
@@ -198,7 +206,7 @@ def parse_directory(args: argparse.Namespace) -> Path:
     if not path_str:
         exit("ERROR: No path or directory were provided")
 
-    path = Path(path_str)
+    path = Path(path_str).resolve()
 
     # check path to directory is valid
     if not path.is_dir():
