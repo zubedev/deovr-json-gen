@@ -227,17 +227,24 @@ def parse_extensions(args: argparse.Namespace) -> set[str]:
 def parse_domain_url(args: argparse.Namespace) -> str:
     # get domain url from command line arguments first
     # if no domain url were provided, try to get them from environment variables
-    url: str = args.url
-
-    if not url:
-        url = os.getenv(f"{ENV_PREFIX}URL", "")
+    url: str = args.url or os.getenv(f"{ENV_PREFIX}URL", "")
 
     # if no domain url were found, build from web server details
     if not url:
-        ssl = strtobool(os.getenv("WEB_SSL"))
+        host = os.getenv("WEB_HOST")
+        port = os.getenv("WEB_PORT")
+        ssl = strtobool(os.getenv("WEB_SSL"))  # True/False but also return None if not set or invalid value
+
+        # for cli users ensure --url is provided
+        if not all([host, port, ssl is not None]):
+            message = (
+                "ERROR: Must provide --url value, else set DEOVR_JSON_GEN_URL environment variable "
+                "or set WEB_HOST and WEB_PORT and WEB_SSL environment variables"
+            )
+            exit(message)
+
+        port = port if port not in ["80", "443"] else ""
         protocol = "https" if ssl else "http"
-        host = os.getenv("WEB_HOST", "localhost")
-        port = os.getenv("WEB_PORT", "")  # 80/443 inferred from protocol
         url = f"{protocol}://{host}{':' if port else ''}{port}"
 
     return url
@@ -291,16 +298,16 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("dir", nargs="?", type=str, help="Path to directory with VR videos")
     parser.add_argument("--out", "-o", nargs="?", type=str, help="Output /path/file_name [default: deovr]")
-    parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the web server")
+    parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the video file server")
     parser.add_argument("--ext", "-e", nargs="*", type=str, help="VR video file extensions")
-    parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     ignore_size_help = "Ignore files smaller than X MB (megabytes) (set to 0 to disable) [default: 10]"
     parser.add_argument("--ignore-size", "-s", nargs="?", type=int, help=ignore_size_help)
     ignore_dur_help = "Ignore files smaller than X seconds (set to 0 to disable) [default: 60]"
     parser.add_argument("--ignore-duration", "-d", nargs="?", type=int, help=ignore_dur_help)
 
+    parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
 
 
