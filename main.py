@@ -17,7 +17,7 @@ DEFAULT_IGNORE_SIZE = 10  # in MB
 DEFAULT_IGNORE_DURATION = 60  # in seconds
 
 logging.basicConfig(format="%(asctime)s %(name)s %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("deovr-json-gen")
 
 
 class MediaInfoDict(TypedDict):
@@ -67,12 +67,6 @@ class Library(TypedDict):
 
 class Scenes(TypedDict):
     scenes: list[Library]
-
-
-def log(message: str, level: str = "info", printout: bool | None = False) -> None:
-    getattr(logger, level)(message)
-    if printout:
-        print(message, flush=True)
 
 
 def strtobool(value: Any) -> bool | None:
@@ -149,7 +143,7 @@ def get_scene(path: Path, directory: Path, domain_url: str, ignore_params: Media
     media_info = get_media_info(path)
 
     if ignore_scene(media_info, ignore_params):
-        log(f"Skipping {path} (size: {media_info['size']} MB, duration: {media_info['duration']} sec)", "debug")
+        logger.debug(f"Skipping {path} (size: {media_info['size']} MB, duration: {media_info['duration']} sec)")
         return None
 
     return Scene(
@@ -176,9 +170,9 @@ def sort_files(files: list[Path]) -> list[Path]:
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
-def print_files(paths: list[Path], verbose: bool | None = False) -> None:
+def print_files(paths: list[Path]) -> None:
     for p in paths:
-        log(f"+ {p}", "debug", verbose)
+        logger.debug(f"+ {p}")
 
 
 def get_files(path: Path, ext: set[str] | None = None) -> list[Path]:
@@ -311,47 +305,49 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
-    log("Generating DeoVR JSON...", "info", verbose)
+def generate(args: argparse.Namespace) -> None:
+    logger.info("Generating DeoVR JSON...")
 
     directory = parse_directory(args)
-    log(f"Directory: {directory}", "debug", verbose)
+    logger.info(f"Input directory: {directory.resolve()}")
 
     out_file = parse_out_file(args)
-    log(f"Output: {out_file}", "debug", verbose)
+    logger.info(f"Output file: {out_file}")
 
     url = parse_domain_url(args)
-    log(f"Domain URL: {url}", "debug", verbose)
+    logger.info(f"Domain URL: {url}")
 
     extensions = parse_extensions(args)
-    log(f"Extensions: {extensions}", "debug", verbose)
+    logger.info(f"Extensions: {extensions}")
 
     ignore_params = parse_ignore_params(args)
-    log(f"Ignore Params: {ignore_params}", "debug", verbose)
+    logger.info(f"Ignore Parameters: {ignore_params}")
 
     files = sort_files(get_files(directory, extensions))
-    print_files(files, verbose)
+    print_files(files)
 
     scene_list = get_scenes(files, directory, url, ignore_params)
     library = Library(name="Library", list=scene_list)
     scenes = Scenes(scenes=[library])
-    log(f"Scenes: {scenes}", "debug", verbose)
+    logger.debug(f"Scenes: {scenes}")
+    logger.info(f"Generating for {len(scene_list)} scenes ...")
 
     gen_json_file(scenes, out_file)
-    log("DeoVR JSON generated successfully!", "info", verbose)
+    logger.info(f"DeoVR JSON generated successfully: {out_file.resolve()}")
 
 
 if __name__ == "__main__":
     parsed_args = parse_args()
-    verbose_logs = parsed_args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
-    loop = parsed_args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
+    verbose = parsed_args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
+    loop = parsed_args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
     while True:
-        generate(parsed_args, verbose_logs)
+        logger.info("=" * 50)
+        generate(parsed_args)
 
         if not loop:
-            log("Done!", "info", verbose_logs)
             break
 
-        log(f"Sleeping for {loop} seconds ...", "info", verbose_logs)
+        logger.info(f"Sleeping for {loop} seconds ...")
         time.sleep(loop)
