@@ -27,7 +27,7 @@ services:
       # please copy .env.example to .env and update the values
       - .env
     volumes:
-      # if you change /tmp/vr, please update main.py VR_DIR as well as Dockerfile
+      # if you change /tmp/vr, please update Dockerfile CMD argument
       - ${DEOVR_JSON_GEN_DIR}:/tmp/vr
       # please create a deovr file on root of this project if it doesn't exist
       - ./deovr:/deovr-json-gen/deovr

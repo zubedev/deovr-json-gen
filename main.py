@@ -12,15 +12,12 @@ from pymediainfo import MediaInfo
 
 ENV_PREFIX = "DEOVR_JSON_GEN_"
 
-VR_DIR = "/tmp/vr"  # if you change this, make sure to change it in docker-compose.yml and Dockerfile
-VR_PATH = Path(VR_DIR)
-
 DEFAULT_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2v", "ts"}
 DEFAULT_IGNORE_SIZE = 10  # in MB
 DEFAULT_IGNORE_DURATION = 60  # in seconds
 
 logging.basicConfig(format="%(asctime)s %(name)s %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("deovr-json-gen")
 
 
 class MediaInfoDict(TypedDict):
@@ -70,12 +67,6 @@ class Library(TypedDict):
 
 class Scenes(TypedDict):
     scenes: list[Library]
-
-
-def log(message: str, level: str = "info", printout: bool | None = False) -> None:
-    getattr(logger, level)(message)
-    if printout:
-        print(message, flush=True)
 
 
 def strtobool(value: Any) -> bool | None:
@@ -139,37 +130,37 @@ def ignore_scene(media_info: MediaInfoDict, ignore_params: MediaInfoDict) -> boo
     return media_info["size"] < ignore_params["size"] or media_info["duration"] < ignore_params["duration"]
 
 
-def get_relative_path(path: Path) -> str:
-    relative_path = path.relative_to(VR_PATH)
+def get_relative_path(path: Path, directory: Path) -> str:
+    relative_path = path.relative_to(directory)
     return "/".join(relative_path.parts)
 
 
-def get_video_url(path: Path, domain_url: str) -> str:
-    return f"{domain_url}/{quote(get_relative_path(path))}"
+def get_video_url(path: Path, directory: Path, domain_url: str) -> str:
+    return f"{domain_url}/{quote(get_relative_path(path, directory))}"
 
 
-def get_scene(path: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scene | None:
+def get_scene(path: Path, directory: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scene | None:
     media_info = get_media_info(path)
 
     if ignore_scene(media_info, ignore_params):
-        log(f"Skipping {path} (size: {media_info['size']} MB, duration: {media_info['duration']} sec)", "debug")
+        logger.debug(f"Skipping {path} (size: {media_info['size']} MB, duration: {media_info['duration']} sec)")
         return None
 
     return Scene(
         title=path.stem,
         videoLength=media_info["duration"],
         thumbnailUrl="https://www.iconsdb.com/icons/preview/red/video-play-xxl.png",
-        video_url=get_video_url(path, domain_url),
+        video_url=get_video_url(path, directory, domain_url),
         is3d=True,  # always true
         stereoMode=get_stereo_mode(path),
         screenType=get_screen_type(path),
     )
 
 
-def get_scenes(files: list[Path], domain_url: str, ignore_params: MediaInfoDict) -> list[Scene]:
+def get_scenes(files: list[Path], directory: Path, domain_url: str, ignore_params: MediaInfoDict) -> list[Scene]:
     scenes = []
     for f in files:
-        scene = get_scene(f, domain_url, ignore_params)
+        scene = get_scene(f, directory, domain_url, ignore_params)
         if scene:
             scenes.append(scene)
     return scenes
@@ -179,9 +170,9 @@ def sort_files(files: list[Path]) -> list[Path]:
     return sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
 
 
-def print_files(paths: list[Path], verbose: bool | None = False) -> None:
+def print_files(paths: list[Path]) -> None:
     for p in paths:
-        log(f"+ {p}", "debug", verbose)
+        logger.debug(f"+ {p}")
 
 
 def get_files(path: Path, ext: set[str] | None = None) -> list[Path]:
@@ -195,14 +186,18 @@ def get_files(path: Path, ext: set[str] | None = None) -> list[Path]:
     return files
 
 
-def gen_json_file(scenes: Scenes, file_name: str = "deovr", indent: int = 4) -> None:
-    with open(file_name, "w") as f:
+def gen_json_file(scenes: Scenes, out_file: Path, indent: int = 4) -> None:
+    with open(out_file, "w") as f:
         json.dump(scenes, f, indent=indent)
 
 
 def parse_ignore_params(args: argparse.Namespace) -> MediaInfoDict:
-    size = args.ignore_size or int(os.getenv(f"{ENV_PREFIX}IGNORE_SIZE", DEFAULT_IGNORE_SIZE))
-    duration = args.ignore_duration or int(os.getenv(f"{ENV_PREFIX}IGNORE_DURATION", DEFAULT_IGNORE_DURATION))
+    size: int | None = args.ignore_size
+    if size is None:
+        size = int(os.getenv(f"{ENV_PREFIX}IGNORE_SIZE", DEFAULT_IGNORE_SIZE))
+    duration: int | None = args.ignore_duration
+    if duration is None:
+        duration = int(os.getenv(f"{ENV_PREFIX}IGNORE_DURATION", DEFAULT_IGNORE_DURATION))
     return MediaInfoDict(size=size, duration=duration)
 
 
@@ -226,20 +221,48 @@ def parse_extensions(args: argparse.Namespace) -> set[str]:
 def parse_domain_url(args: argparse.Namespace) -> str:
     # get domain url from command line arguments first
     # if no domain url were provided, try to get them from environment variables
-    url: str = args.url
-
-    if not url:
-        url = os.getenv(f"{ENV_PREFIX}URL", "")
+    url: str = args.url or os.getenv(f"{ENV_PREFIX}URL", "")
 
     # if no domain url were found, build from web server details
     if not url:
-        ssl = strtobool(os.getenv("WEB_SSL"))
+        host = os.getenv("WEB_HOST")
+        port = os.getenv("WEB_PORT")
+        ssl = strtobool(os.getenv("WEB_SSL"))  # True/False but also return None if not set or invalid value
+
+        # for cli users ensure --url is provided
+        if not all([host, port, ssl is not None]):
+            message = (
+                "ERROR: Must provide --url value, else set DEOVR_JSON_GEN_URL environment variable "
+                "or set WEB_HOST and WEB_PORT and WEB_SSL environment variables"
+            )
+            exit(message)
+
+        port = port if port not in ["80", "443"] else ""
         protocol = "https" if ssl else "http"
-        host = os.getenv("WEB_HOST", "localhost")
-        port = os.getenv("WEB_PORT", "")  # 80/443 inferred from protocol
         url = f"{protocol}://{host}{':' if port else ''}{port}"
 
     return url
+
+
+def parse_out_file(args: argparse.Namespace) -> Path:
+    # get out file from command line arguments first
+    # if no out file were provided, try to get them from environment variables
+    out_file_str: str = args.out
+
+    if not out_file_str:
+        out_file_str = os.getenv(f"{ENV_PREFIX}OUT", "deovr")
+
+    out_path = Path(out_file_str)
+
+    # ensure out file is a file path and not a directory
+    if out_path.is_dir():
+        exit(f"ERROR: {out_path} is a directory, please provide a file path instead, i.e. {out_path / '<file_name>'}")
+
+    # create parent directories if not exists
+    if not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    return out_path
 
 
 def parse_directory(args: argparse.Namespace) -> Path:
@@ -268,59 +291,63 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="deovr-json-generator", description="DeoVR JSON Generator")
 
     parser.add_argument("dir", nargs="?", type=str, help="Path to directory with VR videos")
-    parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the web server")
+    parser.add_argument("--out", "-o", nargs="?", type=str, help="Output /path/file_name [default: deovr]")
+    parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the video file server")
     parser.add_argument("--ext", "-e", nargs="*", type=str, help="VR video file extensions")
-    parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     ignore_size_help = "Ignore files smaller than X MB (megabytes) (set to 0 to disable) [default: 10]"
-    parser.add_argument("--ignore-size", "-s", nargs="?", default=DEFAULT_IGNORE_SIZE, type=int, help=ignore_size_help)
+    parser.add_argument("--ignore-size", "-s", nargs="?", type=int, help=ignore_size_help)
     ignore_dur_help = "Ignore files smaller than X seconds (set to 0 to disable) [default: 60]"
-    parser.add_argument(
-        "--ignore-duration", "-d", nargs="?", default=DEFAULT_IGNORE_DURATION, type=int, help=ignore_dur_help
-    )
+    parser.add_argument("--ignore-duration", "-d", nargs="?", type=int, help=ignore_dur_help)
 
+    parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return parser.parse_args()
 
 
-def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
-    log("Generating DeoVR JSON...", "info", verbose)
+def generate(args: argparse.Namespace) -> None:
+    logger.info("Generating DeoVR JSON...")
 
     directory = parse_directory(args)
-    log(f"Directory: {directory}", "debug", verbose)
+    logger.info(f"Input directory: {directory.resolve()}")
+
+    out_file = parse_out_file(args)
+    logger.info(f"Output file: {out_file}")
 
     url = parse_domain_url(args)
-    log(f"Domain URL: {url}", "debug", verbose)
+    logger.info(f"Domain URL: {url}")
 
     extensions = parse_extensions(args)
-    log(f"Extensions: {extensions}", "debug", verbose)
+    logger.info(f"Extensions: {extensions}")
 
     ignore_params = parse_ignore_params(args)
-    log(f"Ignore Params: {ignore_params}", "debug", verbose)
+    logger.info(f"Ignore Parameters: {ignore_params}")
 
     files = sort_files(get_files(directory, extensions))
-    print_files(files, verbose)
+    print_files(files)
 
-    scene_list = get_scenes(files, url, ignore_params)
+    scene_list = get_scenes(files, directory, url, ignore_params)
     library = Library(name="Library", list=scene_list)
     scenes = Scenes(scenes=[library])
-    log(f"Scenes: {scenes}", "debug", verbose)
+    logger.debug(f"Scenes: {scenes}")
+    logger.info(f"Generating for {len(scene_list)} scenes ...")
 
-    gen_json_file(scenes)
-    log("DeoVR JSON generated successfully!", "info", verbose)
+    gen_json_file(scenes, out_file)
+    logger.info(f"DeoVR JSON generated successfully: {out_file.resolve()}")
 
 
 if __name__ == "__main__":
     parsed_args = parse_args()
-    verbose_logs = parsed_args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
-    loop = parsed_args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
+    verbose = parsed_args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
+    loop = parsed_args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
     while True:
-        generate(parsed_args, verbose_logs)
+        logger.info("=" * 50)
+        generate(parsed_args)
 
         if not loop:
-            log("Done!", "info", verbose_logs)
             break
 
-        log(f"Sleeping for {loop} seconds ...", "info", verbose_logs)
+        logger.info(f"Sleeping for {loop} seconds ...")
         time.sleep(loop)
