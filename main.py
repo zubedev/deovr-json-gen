@@ -16,9 +16,16 @@ VR_DIR = "/tmp/vr"  # if you change this, make sure to change it in docker-compo
 VR_PATH = Path(VR_DIR)
 
 DEFAULT_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2v", "ts"}
+DEFAULT_IGNORE_SIZE = 10  # in MB
+DEFAULT_IGNORE_DURATION = 60  # in seconds
 
 logging.basicConfig(format="%(asctime)s %(name)s %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class MediaInfoDict(TypedDict):
+    size: int  # in MB
+    duration: int  # in seconds
 
 
 class StereoMode(enum.StrEnum):
@@ -112,18 +119,24 @@ def get_screen_type(path: Path) -> ScreenType:
         return ScreenType.EQUIRECT_180
 
 
-def get_video_length(path: Path) -> int:
+def get_media_info(path: Path) -> MediaInfoDict:
     media_info = MediaInfo.parse(path)
     general_tracks = [t for t in media_info.tracks if t.track_type == "General"]
     if not general_tracks:
-        return 0
+        return MediaInfoDict(size=0, duration=0)
 
     general_track = general_tracks[0]
-    duration_in_ms = general_track.duration
-    if not duration_in_ms:
-        return 0
+    size_in_bytes = general_track.file_size or 0
+    duration_in_ms = general_track.duration or 0
 
-    return int(duration_in_ms / 1000)  # convert to seconds
+    size_in_mb = int(size_in_bytes / 1024 / 1024) if size_in_bytes else 0  # convert to MB
+    duration_in_sec = int(duration_in_ms / 1000) if duration_in_ms else 0  # convert to seconds
+
+    return MediaInfoDict(size=size_in_mb, duration=duration_in_sec)
+
+
+def ignore_scene(media_info: MediaInfoDict, ignore_params: MediaInfoDict) -> bool:
+    return media_info["size"] < ignore_params["size"] or media_info["duration"] < ignore_params["duration"]
 
 
 def get_relative_path(path: Path) -> str:
@@ -135,10 +148,16 @@ def get_video_url(path: Path, domain_url: str) -> str:
     return f"{domain_url}/{quote(get_relative_path(path))}"
 
 
-def get_scene(path: Path, domain_url: str) -> Scene:
+def get_scene(path: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scene | None:
+    media_info = get_media_info(path)
+
+    if ignore_scene(media_info, ignore_params):
+        log(f"Skipping {path} (size: {media_info['size']} MB, duration: {media_info['duration']} sec)", "debug")
+        return None
+
     return Scene(
         title=path.stem,
-        videoLength=get_video_length(path),
+        videoLength=media_info["duration"],
         thumbnailUrl="https://www.iconsdb.com/icons/preview/red/video-play-xxl.png",
         video_url=get_video_url(path, domain_url),
         is3d=True,  # always true
@@ -147,10 +166,12 @@ def get_scene(path: Path, domain_url: str) -> Scene:
     )
 
 
-def get_scenes(files: list[Path], domain_url: str) -> list[Scene]:
+def get_scenes(files: list[Path], domain_url: str, ignore_params: MediaInfoDict) -> list[Scene]:
     scenes = []
     for f in files:
-        scenes.append(get_scene(f, domain_url))
+        scene = get_scene(f, domain_url, ignore_params)
+        if scene:
+            scenes.append(scene)
     return scenes
 
 
@@ -177,6 +198,12 @@ def get_files(path: Path, ext: set[str] | None = None) -> list[Path]:
 def gen_json_file(scenes: Scenes, file_name: str = "deovr", indent: int = 4) -> None:
     with open(file_name, "w") as f:
         json.dump(scenes, f, indent=indent)
+
+
+def parse_ignore_params(args: argparse.Namespace) -> MediaInfoDict:
+    size = args.ignore_size or int(os.getenv(f"{ENV_PREFIX}IGNORE_SIZE", DEFAULT_IGNORE_SIZE))
+    duration = args.ignore_duration or int(os.getenv(f"{ENV_PREFIX}IGNORE_DURATION", DEFAULT_IGNORE_DURATION))
+    return MediaInfoDict(size=size, duration=duration)
 
 
 def parse_extensions(args: argparse.Namespace) -> set[str]:
@@ -239,11 +266,20 @@ def parse_directory(args: argparse.Namespace) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="deovr-json-generator", description="DeoVR JSON Generator")
+
     parser.add_argument("dir", nargs="?", type=str, help="Path to directory with VR videos")
     parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the web server")
     parser.add_argument("--ext", "-e", nargs="*", type=str, help="VR video file extensions")
     parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
+    ignore_size_help = "Ignore files smaller than X MB (megabytes) (set to 0 to disable) [default: 10]"
+    parser.add_argument("--ignore-size", "-s", nargs="?", default=DEFAULT_IGNORE_SIZE, type=int, help=ignore_size_help)
+    ignore_dur_help = "Ignore files smaller than X seconds (set to 0 to disable) [default: 60]"
+    parser.add_argument(
+        "--ignore-duration", "-d", nargs="?", default=DEFAULT_IGNORE_DURATION, type=int, help=ignore_dur_help
+    )
+
     return parser.parse_args()
 
 
@@ -259,10 +295,13 @@ def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
     extensions = parse_extensions(args)
     log(f"Extensions: {extensions}", "debug", verbose)
 
+    ignore_params = parse_ignore_params(args)
+    log(f"Ignore Params: {ignore_params}", "debug", verbose)
+
     files = sort_files(get_files(directory, extensions))
     print_files(files, verbose)
 
-    scene_list = get_scenes(files, url)
+    scene_list = get_scenes(files, url, ignore_params)
     library = Library(name="Library", list=scene_list)
     scenes = Scenes(scenes=[library])
     log(f"Scenes: {scenes}", "debug", verbose)
@@ -272,16 +311,16 @@ def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    verbose = args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
-    loop = args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
+    parsed_args = parse_args()
+    verbose_logs = parsed_args.verbose or strtobool(os.getenv(f"{ENV_PREFIX}VERBOSE"))
+    loop = parsed_args.loop or int(os.getenv(f"{ENV_PREFIX}LOOP", 0))
 
     while True:
-        generate(args, verbose)
+        generate(parsed_args, verbose_logs)
 
         if not loop:
-            log("Done!", "info", verbose)
+            log("Done!", "info", verbose_logs)
             break
 
-        log(f"Sleeping for {loop} seconds ...", "info", verbose)
+        log(f"Sleeping for {loop} seconds ...", "info", verbose_logs)
         time.sleep(loop)
