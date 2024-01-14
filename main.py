@@ -201,8 +201,12 @@ def gen_json_file(scenes: Scenes, file_name: str = "deovr", indent: int = 4) -> 
 
 
 def parse_ignore_params(args: argparse.Namespace) -> MediaInfoDict:
-    size = args.ignore_size or int(os.getenv(f"{ENV_PREFIX}IGNORE_SIZE", DEFAULT_IGNORE_SIZE))
-    duration = args.ignore_duration or int(os.getenv(f"{ENV_PREFIX}IGNORE_DURATION", DEFAULT_IGNORE_DURATION))
+    size: int | None = args.ignore_size
+    if size is None:
+        size = int(os.getenv(f"{ENV_PREFIX}IGNORE_SIZE", DEFAULT_IGNORE_SIZE))
+    duration: int | None = args.ignore_duration
+    if duration is None:
+        duration = int(os.getenv(f"{ENV_PREFIX}IGNORE_DURATION", DEFAULT_IGNORE_DURATION))
     return MediaInfoDict(size=size, duration=duration)
 
 
@@ -274,11 +278,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     ignore_size_help = "Ignore files smaller than X MB (megabytes) (set to 0 to disable) [default: 10]"
-    parser.add_argument("--ignore-size", "-s", nargs="?", default=DEFAULT_IGNORE_SIZE, type=int, help=ignore_size_help)
+    parser.add_argument("--ignore-size", "-s", nargs="?", type=int, help=ignore_size_help)
     ignore_dur_help = "Ignore files smaller than X seconds (set to 0 to disable) [default: 60]"
-    parser.add_argument(
-        "--ignore-duration", "-d", nargs="?", default=DEFAULT_IGNORE_DURATION, type=int, help=ignore_dur_help
-    )
+    parser.add_argument("--ignore-duration", "-d", nargs="?", type=int, help=ignore_dur_help)
 
     return parser.parse_args()
 
