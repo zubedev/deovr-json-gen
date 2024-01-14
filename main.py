@@ -12,9 +12,6 @@ from pymediainfo import MediaInfo
 
 ENV_PREFIX = "DEOVR_JSON_GEN_"
 
-VR_DIR = "/tmp/vr"  # if you change this, make sure to change it in docker-compose.yml and Dockerfile
-VR_PATH = Path(VR_DIR)
-
 DEFAULT_EXTENSIONS = {"mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "m2v", "ts"}
 DEFAULT_IGNORE_SIZE = 10  # in MB
 DEFAULT_IGNORE_DURATION = 60  # in seconds
@@ -139,16 +136,16 @@ def ignore_scene(media_info: MediaInfoDict, ignore_params: MediaInfoDict) -> boo
     return media_info["size"] < ignore_params["size"] or media_info["duration"] < ignore_params["duration"]
 
 
-def get_relative_path(path: Path) -> str:
-    relative_path = path.relative_to(VR_PATH)
+def get_relative_path(path: Path, directory: Path) -> str:
+    relative_path = path.relative_to(directory)
     return "/".join(relative_path.parts)
 
 
-def get_video_url(path: Path, domain_url: str) -> str:
-    return f"{domain_url}/{quote(get_relative_path(path))}"
+def get_video_url(path: Path, directory: Path, domain_url: str) -> str:
+    return f"{domain_url}/{quote(get_relative_path(path, directory))}"
 
 
-def get_scene(path: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scene | None:
+def get_scene(path: Path, directory: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scene | None:
     media_info = get_media_info(path)
 
     if ignore_scene(media_info, ignore_params):
@@ -159,17 +156,17 @@ def get_scene(path: Path, domain_url: str, ignore_params: MediaInfoDict) -> Scen
         title=path.stem,
         videoLength=media_info["duration"],
         thumbnailUrl="https://www.iconsdb.com/icons/preview/red/video-play-xxl.png",
-        video_url=get_video_url(path, domain_url),
+        video_url=get_video_url(path, directory, domain_url),
         is3d=True,  # always true
         stereoMode=get_stereo_mode(path),
         screenType=get_screen_type(path),
     )
 
 
-def get_scenes(files: list[Path], domain_url: str, ignore_params: MediaInfoDict) -> list[Scene]:
+def get_scenes(files: list[Path], directory: Path, domain_url: str, ignore_params: MediaInfoDict) -> list[Scene]:
     scenes = []
     for f in files:
-        scene = get_scene(f, domain_url, ignore_params)
+        scene = get_scene(f, directory, domain_url, ignore_params)
         if scene:
             scenes.append(scene)
     return scenes
@@ -195,8 +192,8 @@ def get_files(path: Path, ext: set[str] | None = None) -> list[Path]:
     return files
 
 
-def gen_json_file(scenes: Scenes, file_name: str = "deovr", indent: int = 4) -> None:
-    with open(file_name, "w") as f:
+def gen_json_file(scenes: Scenes, out_file: Path, indent: int = 4) -> None:
+    with open(out_file, "w") as f:
         json.dump(scenes, f, indent=indent)
 
 
@@ -246,6 +243,27 @@ def parse_domain_url(args: argparse.Namespace) -> str:
     return url
 
 
+def parse_out_file(args: argparse.Namespace) -> Path:
+    # get out file from command line arguments first
+    # if no out file were provided, try to get them from environment variables
+    out_file_str: str = args.out
+
+    if not out_file_str:
+        out_file_str = os.getenv(f"{ENV_PREFIX}OUT", "deovr")
+
+    out_path = Path(out_file_str)
+
+    # ensure out file is a file path and not a directory
+    if out_path.is_dir():
+        exit(f"ERROR: {out_path} is a directory, please provide a file path instead, i.e. {out_path / '<file_name>'}")
+
+    # create parent directories if not exists
+    if not out_path.parent.exists():
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    return out_path
+
+
 def parse_directory(args: argparse.Namespace) -> Path:
     # get directory from command line arguments first
     # if no directory were provided, try to get them from environment variables
@@ -272,6 +290,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="deovr-json-generator", description="DeoVR JSON Generator")
 
     parser.add_argument("dir", nargs="?", type=str, help="Path to directory with VR videos")
+    parser.add_argument("--out", "-o", nargs="?", type=str, help="Output /path/file_name [default: deovr]")
     parser.add_argument("--url", "-u", nargs="?", type=str, help="Domain name of the web server")
     parser.add_argument("--ext", "-e", nargs="*", type=str, help="VR video file extensions")
     parser.add_argument("--loop", "-l", nargs="?", default=0, type=int, help="Generate every X seconds")
@@ -291,6 +310,9 @@ def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
     directory = parse_directory(args)
     log(f"Directory: {directory}", "debug", verbose)
 
+    out_file = parse_out_file(args)
+    log(f"Output: {out_file}", "debug", verbose)
+
     url = parse_domain_url(args)
     log(f"Domain URL: {url}", "debug", verbose)
 
@@ -303,12 +325,12 @@ def generate(args: argparse.Namespace, verbose: bool | None = None) -> None:
     files = sort_files(get_files(directory, extensions))
     print_files(files, verbose)
 
-    scene_list = get_scenes(files, url, ignore_params)
+    scene_list = get_scenes(files, directory, url, ignore_params)
     library = Library(name="Library", list=scene_list)
     scenes = Scenes(scenes=[library])
     log(f"Scenes: {scenes}", "debug", verbose)
 
-    gen_json_file(scenes)
+    gen_json_file(scenes, out_file)
     log("DeoVR JSON generated successfully!", "info", verbose)
 
 
